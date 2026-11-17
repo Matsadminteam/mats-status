@@ -1,8 +1,8 @@
 # MATS site check (change request 74). Every 5 minutes: open the live site's health page. If it fails twice in a row
-# (1 minute apart), send an urgent alert to the owner's phone through ntfy (free app); when it works again, send
-# "back up". Only one alert per change, not every 5 minutes.
+# (1 minute apart), this run fails on purpose with "MATS site is DOWN", and GitHub emails the account
+# (Matsadminteam -> its email) about the failed run. Only the first failed check sends an email; while the site stays
+# down, later checks pass quietly. When it works again, the next outage emails again.
 # Public repository on purpose: free and unlimited, so it uses none of the private repositories' Actions minutes.
-# Nothing secret here: the alert channel (ntfy topic) is the hidden secret NTFY_TOPIC.
 name: Site check
 on:
   schedule:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: 'Send a test alert to the phone'
+        description: 'Pretend the site is down (sends the email, to test it)'
         type: boolean
         default: true
 permissions:
@@ -29,16 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Test alert
-        if: github.event_name == 'workflow_dispatch' && inputs.test
-        env:
-          TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: |
-          [ -n "$TOPIC" ] || { echo "::error::secret NTFY_TOPIC is not set"; exit 1; }
-          curl -sS -m 20 -H "Title: MATS test alert" -H "Priority: urgent" -H "Tags: rotating_light" \
-            -d "Test from the MATS site check. If you hear this, alerts work." "https://ntfy.sh/$TOPIC" > /dev/null
-          echo "test alert sent"
-
       - name: Last known state
         uses: actions/cache/restore@v4
         with:
@@ -48,6 +38,8 @@ jobs:
 
       - name: Check the site
         id: c
+        env:
+          TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
         run: |
           probe() { curl -s -m 30 -o body.txt -w '%{http_code}' "$URL" || echo 000; }
           code=$(probe)
@@ -55,27 +47,18 @@ jobs:
           if [ "$code" = 200 ] && grep -q '"ok":true' body.txt; then now=up; else now=down; fi
           before=$(cat state.txt 2>/dev/null || echo up)
           echo "site: $now (HTTP $code), before: $before"
+          if [ "$TEST" = true ]; then
+            echo "::error title=TEST: MATS site is DOWN::This is a test of the site-down email (the site itself is $now)."
+            exit 1
+          fi
           echo "$now" > state.txt
-          echo "now=$now" >> "$GITHUB_OUTPUT"; echo "before=$before" >> "$GITHUB_OUTPUT"; echo "code=$code" >> "$GITHUB_OUTPUT"
-
-      - name: Alert on change
-        if: steps.c.outputs.now != steps.c.outputs.before
-        env:
-          TOPIC: ${{ secrets.NTFY_TOPIC }}
-          NOW: ${{ steps.c.outputs.now }}
-          CODE: ${{ steps.c.outputs.code }}
-        run: |
-          [ -n "$TOPIC" ] || { echo "::error::secret NTFY_TOPIC is not set"; exit 1; }
-          if [ "$NOW" = down ]; then
-            curl -sS -m 20 -H "Title: MATS site is DOWN" -H "Priority: urgent" -H "Tags: rotating_light" \
-              -d "matsapp.org health check failed twice (HTTP $CODE). Tell Claude: the site is down." "https://ntfy.sh/$TOPIC" > /dev/null
-          else
-            curl -sS -m 20 -H "Title: MATS site is back up" -H "Priority: default" -H "Tags: white_check_mark" \
-              -d "matsapp.org is working again." "https://ntfy.sh/$TOPIC" > /dev/null
+          if [ "$now" = down ] && [ "$before" != down ]; then
+            echo "::error title=MATS site is DOWN::matsapp.org health check failed twice (HTTP $code). Tell Claude: the site is down."
+            exit 1
           fi
 
       - name: Remember state
-        if: always()
+        if: always() && hashFiles('state.txt') != ''
         uses: actions/cache/save@v4
         with:
           path: state.txt
