@@ -27,7 +27,7 @@ env:
 
 jobs:
   check:
-    name: matsapp.org not responding - tell Claude
+    name: matsapp.org health check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
