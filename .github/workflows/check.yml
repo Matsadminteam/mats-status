@@ -3,7 +3,8 @@
 # (Matsadminteam -> its email) about the failed run. Only the first failed check sends an email; while the site stays
 # down, later checks pass quietly. When it works again, the next outage emails again.
 # Public repository on purpose: free and unlimited, so it uses none of the private repositories' Actions minutes.
-name: Site check
+# The name shows in GitHub's email subject: "Run failed: MATS site DOWN alert - main".
+name: MATS site DOWN alert
 on:
   schedule:
     - cron: '*/5 * * * *'
@@ -26,6 +27,7 @@ env:
 
 jobs:
   check:
+    name: matsapp.org not responding - tell Claude
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
